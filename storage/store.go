@@ -633,6 +633,38 @@ func (s *Store) SplitRange(origRng, newRng *Range) error {
 	return nil
 }
 
+// MergeRange expands the subsuming range to absorb the subsumed range.
+// This merge operation will fail if the two ranges are not colocated
+// on the same store.
+func (s *Store) MergeRange(subsumingRng *Range, updatedEndKey proto.Key, subsumedRaftID int64) error {
+	if !subsumingRng.Desc.EndKey.Less(updatedEndKey) {
+		return util.Errorf("the new end key is not greater than the current one: %+v < %+v",
+			updatedEndKey, subsumingRng.Desc.EndKey)
+	}
+
+	subsumedRng, err := s.GetRange(subsumedRaftID)
+	if err != nil {
+		return util.Errorf("The two ranges %d and %d are not colocated.",
+			subsumingRng.Desc.RaftID, subsumedRaftID)
+	}
+
+	// Remove and destroy the subsumed range.
+	if err = s.RemoveRange(subsumedRng); err != nil {
+		return util.Errorf("cannot remove range %s", err)
+	}
+	if err = subsumedRng.SoftDestroy(); err != nil {
+		return util.Errorf("cannot soft destory range %s", err)
+	}
+
+	// See comments in SplitRange for details on mutex locking.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Update the end key of the subsuming range.
+	subsumingRng.Desc.EndKey = updatedEndKey
+
+	return nil
+}
+
 // AddRange adds the range to the store's range map and to the sorted
 // rangesByKey slice.
 func (s *Store) AddRange(rng *Range) error {
@@ -913,8 +945,8 @@ func (s *Store) processRaft(r raftInterface, closer chan struct{}) {
 			r, ok := s.ranges[raftCmd.cmd.RaftID]
 			s.mu.Unlock()
 			if !ok {
-				log.Errorf("got committed raft command for %d but have no range with that ID",
-					raftCmd.cmd.RaftID)
+				log.Errorf("got committed raft command for %d but have no range with that ID: %+v",
+					raftCmd.cmd.RaftID, raftCmd)
 			} else {
 				r.processRaftCommand(raftCmd.cmdIDKey, raftCmd.cmd)
 			}

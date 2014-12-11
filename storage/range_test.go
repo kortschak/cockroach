@@ -110,6 +110,19 @@ func newTransaction(name string, baseKey proto.Key, userPriority int32,
 		isolation, clock.Now(), clock.MaxOffset().Nanoseconds())
 }
 
+// CreateReplicaSets creates new proto.Replica protos based on an array of integers
+// to aid in testing.  Not that this does not actual produce any actual replicas, just
+// create the proto.
+func createReplicaSets(replicaNumbers []int32) []proto.Replica {
+	result := []proto.Replica{}
+	for _, replicaNumber := range replicaNumbers {
+		result = append(result, proto.Replica{
+			StoreID: replicaNumber,
+		})
+	}
+	return result
+}
+
 // TestRangeContains verifies that the range uses Key.Address() in
 // order to properly resolve addresses for local keys.
 func TestRangeContains(t *testing.T) {
@@ -1497,3 +1510,32 @@ func TestConditionFailedError(t *testing.T) {
 			value, v)
 	}
 }
+
+// TestIntersectReplicaSets tests to ensure that intersectReplicaSets
+// returns the correct responses.
+func TestIntersectReplicaSets(t *testing.T) {
+	testData := []struct {
+		expected bool
+		a        []proto.Replica
+		b        []proto.Replica
+	}{
+		{true, []proto.Replica{}, []proto.Replica{}},
+		{true, createReplicaSets([]int32{1}), createReplicaSets([]int32{1})},
+		{true, createReplicaSets([]int32{1, 2}), createReplicaSets([]int32{1, 2})},
+		{true, createReplicaSets([]int32{1, 2}), createReplicaSets([]int32{2, 1})},
+		{false, createReplicaSets([]int32{1}), createReplicaSets([]int32{2})},
+		{false, createReplicaSets([]int32{1, 2}), createReplicaSets([]int32{2})},
+		{false, createReplicaSets([]int32{1, 2}), createReplicaSets([]int32{1})},
+		{false, createReplicaSets([]int32{}), createReplicaSets([]int32{1})},
+		{true, createReplicaSets([]int32{1, 2, 3}), createReplicaSets([]int32{2, 3, 1})},
+		{true, createReplicaSets([]int32{1, 1}), createReplicaSets([]int32{1, 1})},
+		{false, createReplicaSets([]int32{1, 1}), createReplicaSets([]int32{1, 1, 1})},
+		{true, createReplicaSets([]int32{1, 2, 3, 1, 2, 3}), createReplicaSets([]int32{1, 1, 2, 2, 3, 3})},
+	}
+	for _, test := range testData {
+		if intersectReplicaSets(test.a, test.b) != test.expected {
+			t.Fatalf("test returned incorrect results %+v", test)
+		}
+	}
+}
+
